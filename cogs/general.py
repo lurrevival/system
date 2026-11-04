@@ -85,6 +85,10 @@ def build_help_embed(bot, guild, category="overview"):
             f"{_cmd('vc unmute @member')}  {_cmd('vc transfer @member')}\n"
             f"{_cmd('vc claim')}  {_cmd('vc')}"
         ), inline=False)
+        embed.add_field(name="📌 24/7 voice (Manage Server)", value=(
+            f"{_cmd('247 on [channel]')} — Keep the bot in a voice channel all the time\n"
+            f"{_cmd('247 off')}  {_cmd('247 status')}"
+        ), inline=False)
 
     elif category == "levels":
         embed.add_field(name="⭐ Ranks", value=(
@@ -170,6 +174,7 @@ def build_help_embed(bot, guild, category="overview"):
             "`/autorole add`  `/autorole remove`  `/autorole list`\n"
             "`/tickets config`  `/tickets panel`\n"
             "`/tempvoice setup`  `/tempvoice panel`  `/tempvoice off`\n"
+            "`/247 on`  `/247 off`  `/247 status`\n"
             "`/logs setup`  `/automod status`  `/levels toggle`\n"
             "`/afk setup`"
         ), inline=False)
@@ -308,6 +313,8 @@ class General(commands.Cog):
         ), inline=True)
         tv = s["tempvoice"]
         embed.add_field(name="🔊 Temp voice", value=f"Hub: {_chan(guild, tv['hub_id'])}", inline=True)
+        v247 = s.get("voice247", {}).get("channel_id")
+        embed.add_field(name="📌 24/7 voice", value=_chan(guild, v247) if v247 else "off", inline=True)
         await respond(interaction, embed=embed)
 
 

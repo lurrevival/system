@@ -1,17 +1,18 @@
 """24/7 voice: keep the bot sitting in one voice channel all the time.
 
-/247 on [channel]   - join a channel and stay there (defaults to the channel you are in)
-/247 off            - leave and stop staying
-/247 status         - show where the bot is meant to stay and whether it is there
+/247 action:on [channel]  - join a channel and stay there (defaults to the channel you are in)
+/247 action:off           - leave and stop staying
+/247 action:status        - show where the bot is meant to stay and whether it is there
 
 The chosen channel is saved, so the bot rejoins after a restart, after being
 kicked/disconnected, or after being dragged to another channel.
 """
 import asyncio
 import logging
-from typing import Optional
+from typing import Literal, Optional
 
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 
 from utils.helpers import GREEN, RED, is_manager, make_embed, say
@@ -51,7 +52,7 @@ class Voice247(commands.Cog):
 
     # ---- settings -----------------------------------------------------
     async def _cfg(self, guild_id):
-        return (await self.bot.db.get_settings(guild_id))["voice247"]
+        return (await self.bot.db.get_settings(guild_id)).setdefault("voice247", {"channel_id": None})
 
     async def _target(self, guild):
         """The channel id this server wants the bot in, or None."""
@@ -133,37 +134,35 @@ class Voice247(commands.Cog):
             await self.bot.db.save_settings(channel.guild.id)
             log.info("24/7 voice: channel %s was deleted, turned 24/7 off", channel.id)
 
-    # ---- commands -----------------------------------------------------
-    async def _check(self, ctx):
-        if ctx.guild is None:
-            await say(ctx, "Use this inside a server.", ephemeral=True)
-            return False
-        if not is_manager(ctx.author):
-            await say(ctx, "🔒 You need the **Manage Server** permission to use this command.", ephemeral=True)
-            return False
-        return True
-
-    @commands.hybrid_group(name="247", aliases=["stay"], description="Keep the bot in a voice channel 24/7",
-                           invoke_without_command=True)
+    # ---- command: /247 [on|off|status] [channel] ----------------------
+    @commands.hybrid_command(name="247", aliases=["stay"], description="Keep the bot in a voice channel 24/7")
+    @app_commands.describe(action="on = join and stay, off = leave, status = check",
+                           channel="Voice channel to stay in (default: the one you are in)")
     @commands.guild_only()
-    async def stay_247(self, ctx: commands.Context):
-        if not await self._check(ctx):
-            return
-        await self._send_status(ctx)
+    async def stay_247(self, ctx: commands.Context, action: Literal["on", "off", "status"] = "status",
+                       channel: Optional[discord.VoiceChannel] = None):
+        if ctx.guild is None:
+            return await say(ctx, "Use this inside a server.", ephemeral=True)
+        if not is_manager(ctx.author):
+            return await say(ctx, "🔒 You need the **Manage Server** permission to use this command.",
+                             ephemeral=True)
+        if action == "on":
+            await self._turn_on(ctx, channel)
+        elif action == "off":
+            await self._turn_off(ctx)
+        else:
+            await self._send_status(ctx)
 
-    @stay_247.command(name="on", description="Join a voice channel and stay there 24/7")
-    async def stay_on(self, ctx: commands.Context, channel: Optional[discord.VoiceChannel] = None):
-        if not await self._check(ctx):
-            return
+    async def _turn_on(self, ctx, channel):
         if channel is None:
             voice = getattr(ctx.author, "voice", None)
             channel = voice.channel if voice else None
         if channel is None:
-            return await say(ctx, "Join a voice channel first, or name one: `/247 on channel:<voice channel>`.",
+            return await say(ctx, "Join a voice channel first, or pick one: `/247 action:on channel:<voice channel>`.",
                              ephemeral=True)
-        cfg = (await self.bot.db.get_settings(ctx.guild.id))
-        tv = cfg["tempvoice"]
-        if channel.id == tv["hub_id"] or await self.bot.db.get_room(channel.id) is not None:
+        settings = await self.bot.db.get_settings(ctx.guild.id)
+        settings.setdefault("voice247", {"channel_id": None})
+        if channel.id == settings["tempvoice"]["hub_id"] or await self.bot.db.get_room(channel.id) is not None:
             return await say(ctx, "Pick a normal voice channel. Temp-voice rooms and the create-room hub "
                                   "are managed automatically.", ephemeral=True)
         problem = channel_problem(channel, ctx.guild.me)
@@ -171,7 +170,7 @@ class Voice247(commands.Cog):
             return await say(ctx, f"❌ {problem}", ephemeral=True)
         if ctx.interaction is not None:
             await ctx.defer(ephemeral=True)
-        cfg["voice247"]["channel_id"] = channel.id
+        settings["voice247"]["channel_id"] = channel.id
         await self.bot.db.save_settings(ctx.guild.id)
         error = await self.ensure_connected(ctx.guild)
         if error:
@@ -181,10 +180,7 @@ class Voice247(commands.Cog):
                                         "automatically if I get disconnected or the bot restarts.", color=GREEN),
                   ephemeral=True)
 
-    @stay_247.command(name="off", description="Leave the voice channel and stop staying 24/7")
-    async def stay_off(self, ctx: commands.Context):
-        if not await self._check(ctx):
-            return
+    async def _turn_off(self, ctx):
         cfg = await self._cfg(ctx.guild.id)
         was_on = cfg["channel_id"] is not None
         cfg["channel_id"] = None  # saved first so the reconnect listener doesn't bring us back
@@ -199,16 +195,10 @@ class Voice247(commands.Cog):
                                         "I left the voice channel." if was_on else "It wasn't on.",
                                         color=RED), ephemeral=True)
 
-    @stay_247.command(name="status", description="Show the 24/7 voice channel and whether I'm in it")
-    async def stay_status(self, ctx: commands.Context):
-        if not await self._check(ctx):
-            return
-        await self._send_status(ctx)
-
     async def _send_status(self, ctx):
         channel_id = await self._target(ctx.guild)
         if not channel_id:
-            return await say(ctx, "24/7 voice is **off**. Turn it on with `/247 on`.", ephemeral=True)
+            return await say(ctx, "24/7 voice is **off**. Turn it on with `/247 action:on`.", ephemeral=True)
         channel = ctx.guild.get_channel(int(channel_id))
         client = ctx.guild.voice_client
         connected = client is not None and client.is_connected() and client.channel.id == int(channel_id)
@@ -220,3 +210,4 @@ class Voice247(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(Voice247(bot))
+    log.info("24/7 voice: cog ready (command: /247)")

@@ -17,7 +17,7 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("mg3")
-discord.VoiceClient.warn_nacl = False  # this bot doesn't play audio, so no voice libraries are needed
+discord.VoiceClient.warn_nacl = False  # no audio is played; PyNaCl/davey (discord.py[voice]) are only needed to sit in a voice channel for /247
 
 COGS = [
     "cogs.general",
@@ -30,6 +30,7 @@ COGS = [
     "cogs.tempvoice",
     "cogs.profile",
     "cogs.afk",
+    "cogs.voice247",
 ]
 
 
@@ -60,10 +61,16 @@ class DorBot(commands.Bot):
                 guild = discord.Object(id=config.GUILD_ID)
                 self.tree.copy_global_to(guild=guild)
                 synced = await self.tree.sync(guild=guild)
-                log.info("Synced %d commands to guild %s", len(synced), config.GUILD_ID)
+                log.info("Synced %d commands to guild %s: %s", len(synced), config.GUILD_ID,
+                         ", ".join(sorted(c.name for c in synced)))
+                if not any(c.name == "247" for c in synced):
+                    log.warning("/247 was NOT synced. Is cogs/voice247.py there and listed in COGS in main.py?")
             else:
                 synced = await self.tree.sync()
-                log.info("Synced %d global commands (can take up to an hour to appear)", len(synced))
+                log.info("Synced %d global commands (can take up to an hour to appear): %s", len(synced),
+                         ", ".join(sorted(c.name for c in synced)))
+                if not any(c.name == "247" for c in synced):
+                    log.warning("/247 was NOT synced. Is cogs/voice247.py there and listed in COGS in main.py?")
         except Exception:
             log.exception("Command sync failed")
 

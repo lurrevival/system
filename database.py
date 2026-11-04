@@ -52,6 +52,7 @@ DEFAULT_SETTINGS = {
         "exempt_roles": [],
         "exempt_channels": [],
     },
+    "voice247": {"channel_id": None},
     "tempvoice": {
         "hub_id": None,
         "category_id": None,
