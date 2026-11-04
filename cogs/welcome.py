@@ -1,3 +1,5 @@
+import asyncio
+import io
 import logging
 from typing import Optional
 
@@ -7,6 +9,7 @@ from discord.ext import commands
 
 from utils.helpers import GREEN, can_manage_role, admin_group, make_embed, respond
 from utils.text import render_template, truncate
+from utils.welcome_card import render_welcome_card
 
 log = logging.getLogger("mg3.welcome")
 
@@ -29,15 +32,42 @@ class Welcome(commands.Cog):
         )
         return truncate(text, 1900)
 
+    async def _card(self, member):
+        """Build the personalised banner for this member, or None if it can't be made."""
+        try:
+            try:
+                avatar = await member.display_avatar.replace(size=512, static_format="png").read()
+            except (discord.HTTPException, discord.NotFound):
+                avatar = None  # no avatar: the banner keeps its placeholder silhouette
+            png = await asyncio.to_thread(
+                render_welcome_card, avatar, member.display_name, (member.global_name or "", member.name))
+            return png
+        except Exception:
+            log.exception("Could not render welcome card for %s", member.id)
+            return None
+
     async def _post(self, channel, cfg, member):
         text = self._render(cfg, member)
+        mentions = discord.AllowedMentions(users=[member])
+        png = None
+        if cfg.get("card", True) and channel.permissions_for(member.guild.me).attach_files:
+            png = await self._card(member)
+
+        if png is not None:
+            file = discord.File(io.BytesIO(png), filename="welcome.png")
+            if cfg["embed"]:
+                embed = make_embed(None, text, color=GREEN)
+                embed.set_image(url="attachment://welcome.png")
+                return await channel.send(content=member.mention, embed=embed, file=file,
+                                          allowed_mentions=mentions)
+            return await channel.send(text, file=file, allowed_mentions=mentions)
+
         if cfg["embed"]:
             embed = make_embed("Welcome!", text, color=GREEN)
             embed.set_thumbnail(url=member.display_avatar.url)
-            await channel.send(content=member.mention, embed=embed,
-                               allowed_mentions=discord.AllowedMentions(users=[member]))
+            await channel.send(content=member.mention, embed=embed, allowed_mentions=mentions)
         else:
-            await channel.send(text, allowed_mentions=discord.AllowedMentions(users=[member]))
+            await channel.send(text, allowed_mentions=mentions)
 
     # ---- events -------------------------------------------------------
     @commands.Cog.listener()
@@ -82,13 +112,14 @@ class Welcome(commands.Cog):
         perms = channel.permissions_for(interaction.guild.me)
         if not (perms.send_messages and perms.embed_links):
             return await respond(interaction, f"I need **Send Messages** and **Embed Links** in {channel.mention}.")
+        picture_note = "" if perms.attach_files else " (Give me **Attach Files** there too, or the welcome picture will be skipped.)"
         settings = await self.bot.db.get_settings(interaction.guild_id)
         cfg = settings["welcome"]
         cfg.update(enabled=True, channel_id=channel.id, embed=embed)
         if message:
             cfg["message"] = truncate(message, 1500, "")
         await self.bot.db.save_settings(interaction.guild_id)
-        await respond(interaction, f"Welcome messages are **on** in {channel.mention}. Use `/welcome test` to preview.")
+        await respond(interaction, f"Welcome messages are **on** in {channel.mention}. Use `/welcome test` to preview.{picture_note}")
 
     @welcome.command(name="off", description="Turn off welcome messages")
     async def welcome_off(self, interaction: discord.Interaction):
@@ -99,12 +130,27 @@ class Welcome(commands.Cog):
 
     @welcome.command(name="test", description="Preview the welcome message here, using you as the new member")
     async def welcome_test(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         settings = await self.bot.db.get_settings(interaction.guild_id)
         cfg = settings["welcome"]
         text = self._render(cfg, interaction.user)
+        png = await self._card(interaction.user) if cfg.get("card", True) else None
+        if png is not None:
+            file = discord.File(io.BytesIO(png), filename="welcome.png")
+            embed = make_embed("Welcome! (preview)", text, color=GREEN)
+            embed.set_image(url="attachment://welcome.png")
+            return await respond(interaction, embed=embed, file=file)
         embed = make_embed("Welcome! (preview)", text, color=GREEN)
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         await respond(interaction, embed=embed)
+
+    @welcome.command(name="card", description="Turn the personalised welcome picture on or off")
+    @app_commands.describe(enabled="Show each new member's avatar and name on the dor banner")
+    async def welcome_card(self, interaction: discord.Interaction, enabled: bool):
+        settings = await self.bot.db.get_settings(interaction.guild_id)
+        settings["welcome"]["card"] = enabled
+        await self.bot.db.save_settings(interaction.guild_id)
+        await respond(interaction, f"Welcome picture is **{'on' if enabled else 'off'}**. Use `/welcome test` to preview.")
 
     @welcome.command(name="show", description="Show the current welcome settings")
     async def welcome_show(self, interaction: discord.Interaction):
@@ -112,6 +158,7 @@ class Welcome(commands.Cog):
         channel = f"<#{cfg['channel_id']}>" if cfg["channel_id"] else "not set"
         await respond(interaction, embed=make_embed("Welcome settings", (
             f"**Enabled:** {cfg['enabled']}\n**Channel:** {channel}\n**Embed:** {cfg['embed']}\n"
+            f"**Picture:** {cfg.get('card', True)}\n"
             f"**Message:**\n{cfg['message']}")))
 
     # ---- /autorole ----------------------------------------------------

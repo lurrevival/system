@@ -14,6 +14,7 @@ DEFAULT_SETTINGS = {
         "channel_id": None,
         "message": "Welcome {mention} to **{server}**! You are member #{count}.",
         "embed": True,
+        "card": True,
     },
     "autorole": {"members": [], "bots": []},
     "tickets": {
