@@ -1,0 +1,9 @@
+.env
+.env.*
+!.env.example
+data/*
+!data/.gitkeep
+__pycache__/
+*.pyc
+venv/
+cookies.txt
