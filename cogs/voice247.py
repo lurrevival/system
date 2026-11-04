@@ -144,7 +144,7 @@ class Voice247(commands.Cog):
         return True
 
     @commands.hybrid_group(name="247", aliases=["stay"], description="Keep the bot in a voice channel 24/7",
-                           invoke_without_command=True, fallback="status")
+                           invoke_without_command=True)
     @commands.guild_only()
     async def stay_247(self, ctx: commands.Context):
         if not await self._check(ctx):
